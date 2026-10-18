@@ -1,0 +1,298 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>ステージURL置換ツール</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans+JP:wght@400;500;700&display=swap">
+<style>
+/* Layout: 1列のツールバー（ドメイン設定）→ 左右2ペイン（貼り付け / 置換結果）→ 変更箇所リスト */
+:root {
+  --bg: #f3f5f6;
+  --surface: #ffffff;
+  --fg: #1d2a30;
+  --muted: #5f7079;
+  --line: #d5dde1;
+  --accent: #1f6f78;
+  --accent-fg: #ffffff;
+  --old: #a4452c;
+  --new: #2c7a4b;
+  --warn-bg: #fdf3e1;
+  --warn-fg: #8a5a00;
+  --font-ui: "IBM Plex Sans JP", "Hiragino Sans", "Yu Gothic UI", sans-serif;
+  --font-code: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #12191c; --surface: #1a2327; --fg: #e3eaed; --muted: #94a5ad; --line: #2e3b41;
+    --accent: #4fb3bd; --accent-fg: #0d1a1d; --old: #e88a70; --new: #6fcf96;
+    --warn-bg: #3a2e14; --warn-fg: #f2c46b; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #12191c; --surface: #1a2327; --fg: #e3eaed; --muted: #94a5ad; --line: #2e3b41;
+  --accent: #4fb3bd; --accent-fg: #0d1a1d; --old: #e88a70; --new: #6fcf96;
+  --warn-bg: #3a2e14; --warn-fg: #f2c46b; color-scheme: dark;
+}
+body {
+  background: var(--bg); color: var(--fg); font-family: var(--font-ui); font-size: 14px; line-height: 1.6;
+}
+.wrap {
+  max-width: 1200px; margin: 0 auto;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 24px 40px;
+  display: grid; gap: 20px;
+}
+header h1 { font-size: 1.35rem; margin: 0; font-weight: 700; text-wrap: balance; }
+header p { margin: 4px 0 0; color: var(--muted); }
+
+.settings {
+  background: var(--surface); border: 1px solid var(--line); border-radius: 8px;
+  padding: 16px; display: grid; gap: 14px;
+}
+.domains { display: grid; grid-template-columns: 1fr auto 1fr; gap: 10px; align-items: end; }
+.domains .arrow { font-family: var(--font-code); color: var(--muted); padding-bottom: 9px; }
+label.field { display: grid; gap: 4px; min-width: 0; }
+.lbl { font-size: 0.75rem; letter-spacing: 0.06em; color: var(--muted); font-weight: 500; }
+input[type="text"] {
+  font-family: var(--font-code); font-size: 0.95rem; padding: 8px 10px;
+  border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--fg); width: 100%; box-sizing: border-box;
+}
+#fromHost { border-left: 3px solid var(--old); }
+#toHost { border-left: 3px solid var(--new); }
+.opts { display: flex; flex-wrap: wrap; gap: 8px 20px; }
+.opts label { display: flex; gap: 6px; align-items: center; cursor: pointer; }
+.opts code { font-family: var(--font-code); font-size: 0.85em; }
+
+.panes { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+.pane { display: grid; grid-template-rows: auto 1fr; gap: 6px; min-width: 0; }
+.pane-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; min-height: 34px; }
+.pane-head h2 { font-size: 0.95rem; margin: 0; font-weight: 700; }
+textarea {
+  font-family: var(--font-code); font-size: 0.82rem; line-height: 1.55;
+  width: 100%; box-sizing: border-box; min-height: 360px; resize: vertical;
+  padding: 12px; border: 1px solid var(--line); border-radius: 8px;
+  background: var(--surface); color: var(--fg);
+}
+#output { background: var(--bg); }
+
+button {
+  font-family: var(--font-ui); font-size: 0.85rem; font-weight: 500; cursor: pointer;
+  padding: 6px 14px; border-radius: 6px; border: 1px solid var(--line); background: var(--surface); color: var(--fg);
+}
+button.primary { background: var(--accent); color: var(--accent-fg); border-color: var(--accent); }
+button:focus-visible, input:focus-visible, textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.btns { display: flex; gap: 6px; align-items: center; }
+.toast { font-size: 0.8rem; color: var(--new); }
+
+.status { display: flex; flex-wrap: wrap; gap: 8px; }
+.pill {
+  font-size: 0.8rem; padding: 3px 10px; border-radius: 999px; border: 1px solid var(--line);
+  background: var(--surface); font-variant-numeric: tabular-nums;
+}
+.pill strong { font-weight: 700; }
+.pill.ok { color: var(--new); border-color: currentColor; }
+.pill.warn { color: var(--warn-fg); background: var(--warn-bg); border-color: transparent; }
+.sample-note { font-size: 0.8rem; color: var(--warn-fg); background: var(--warn-bg); padding: 2px 8px; border-radius: 4px; }
+
+.changes h2 { font-size: 0.95rem; margin: 0 0 8px; }
+.changes-table { overflow-x: auto; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); }
+table { border-collapse: collapse; width: 100%; font-family: var(--font-code); font-size: 0.78rem; }
+th, td { text-align: left; padding: 7px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+th { font-family: var(--font-ui); font-size: 0.72rem; letter-spacing: 0.06em; color: var(--muted); font-weight: 500; }
+tr:last-child td { border-bottom: 0; }
+td.n { text-align: right; font-variant-numeric: tabular-nums; color: var(--muted); width: 3em; }
+td .before { color: var(--old); word-break: break-all; }
+td .after { color: var(--new); word-break: break-all; }
+.empty { padding: 14px; color: var(--muted); font-family: var(--font-ui); font-size: 0.85rem; }
+
+@media (max-width: 760px) {
+  .domains { grid-template-columns: 1fr; }
+  .domains .arrow { display: none; }
+  .panes { grid-template-columns: 1fr; }
+  textarea { min-height: 220px; }
+}
+</style>
+</head>
+<body>
+
+<div class="wrap">
+  <header>
+    <h1>ステージURL置換ツール</h1>
+    <p>投稿本文を貼り付けると、ステージ環境のドメインを本番ドメインに置き換えます。処理はすべてブラウザ内で行われ、内容は送信されません。</p>
+  </header>
+
+  <section class="settings" aria-label="置換設定">
+    <div class="domains">
+      <label class="field">
+        <span class="lbl">ステージ（置換前）ドメイン＋パス可</span>
+        <input type="text" id="fromHost" spellcheck="false" autocomplete="off" placeholder="stg.example.com/wp/stg/wp-content">
+      </label>
+      <span class="arrow" aria-hidden="true">→</span>
+      <label class="field">
+        <span class="lbl">本番（置換後）ドメイン＋パス可</span>
+        <input type="text" id="toHost" spellcheck="false" autocomplete="off" placeholder="www.example.com">
+      </label>
+    </div>
+    <div class="opts">
+      <label><input type="checkbox" id="optHttps" checked> http / https を <code>https://</code> に統一</label>
+      <label><input type="checkbox" id="optEscaped" checked> ブロックエディタのエスケープ表記 <code>https:\/\/</code> も置換</label>
+    </div>
+  </section>
+
+  <div class="status" id="status" aria-live="polite"></div>
+
+  <div class="panes">
+    <div class="pane">
+      <div class="pane-head">
+        <h2>貼り付け（ステージの本文）</h2>
+        <div class="btns">
+          <span class="sample-note" id="sampleNote">サンプル</span>
+          <button type="button" id="clearBtn">クリア</button>
+        </div>
+      </div>
+      <textarea id="input" spellcheck="false" aria-label="置換前の本文"></textarea>
+    </div>
+    <div class="pane">
+      <div class="pane-head">
+        <h2>置換結果（本番に貼る本文）</h2>
+        <div class="btns">
+          <span class="toast" id="toast" hidden>コピーしました</span>
+          <button type="button" class="primary" id="copyBtn">コピー</button>
+        </div>
+      </div>
+      <textarea id="output" spellcheck="false" readonly aria-label="置換後の本文"></textarea>
+    </div>
+  </div>
+
+  <section class="changes">
+    <h2>変更箇所</h2>
+    <div class="changes-table" id="changes"></div>
+  </section>
+</div>
+
+<script>
+(() => {
+  const $ = id => document.getElementById(id);
+  const fromEl = $('fromHost'), toEl = $('toHost'), httpsEl = $('optHttps'), escEl = $('optEscaped');
+  const inputEl = $('input'), outputEl = $('output');
+
+  const SAMPLE = `<!-- wp:image {"id":512,"sizeSlug":"large","linkDestination":"custom","href":"https:\\/\\/stg.example.com\\/lineup\\/"} -->
+<figure class="wp-block-image size-large"><a href="https://stg.example.com/lineup/"><img src="https://stg.example.com/wp-content/uploads/2026/10/banner.jpg" alt="" class="wp-image-512"/></a></figure>
+<!-- /wp:image -->
+
+<!-- wp:paragraph -->
+<p>詳しくは<a href="http://stg.example.com/price.html#furikae">料金ページ</a>をご覧ください。</p>
+<!-- /wp:paragraph -->
+
+<!-- wp:paragraph -->
+<p>外部サイト：<a href="https://stg.example.com.other-site.jp/">これは別ドメインなので置換しない</a></p>
+<!-- /wp:paragraph -->`;
+
+  const store = {
+    get(k) { try { return localStorage.getItem(k); } catch (e) { return null; } },
+    set(k, v) { try { localStorage.setItem(k, v); } catch (e) {} }
+  };
+
+  fromEl.value = store.get('from') ?? 'stg.example.com';
+  toEl.value = store.get('to') ?? 'www.example.com';
+  if (store.get('https') !== null) httpsEl.checked = store.get('https') === '1';
+  if (store.get('esc') !== null) escEl.checked = store.get('esc') === '1';
+  inputEl.value = SAMPLE;
+
+  const normHost = v => v.trim().replace(/^[a-z]+:\/\//i, '').replace(/^\/\//, '').replace(/\/+$/, '');
+  const reEsc = s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  // ホスト名の直後が英数字・ハイフン・「.英数字」なら別ドメインとみなして置換しない
+  const END = '(?![\\w-]|\\.[\\w])';
+  const PATH = '([^\\s"\'<>)]*)';
+  const escapeHtml = s => s.replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+
+  function run() {
+    const from = normHost(fromEl.value), to = normHost(toEl.value);
+    const src = inputEl.value;
+    const status = $('status'), changesEl = $('changes');
+
+    if (!from || !to || from === to) {
+      outputEl.value = src;
+      status.innerHTML = '<span class="pill warn">置換前と置換後のドメインを入力してください</span>';
+      changesEl.innerHTML = '<div class="empty">ドメインを設定すると変更箇所が表示されます。</div>';
+      return;
+    }
+
+    const h = reEsc(from), hE = reEsc(from.replace(/\//g, '\\/'));
+    const toE = to.replace(/\//g, '\\/');
+    const rules = [];
+    if (httpsEl.checked) {
+      rules.push({ re: new RegExp('https?://' + h + END + PATH, 'gi'), rep: 'https://' + to });
+      if (escEl.checked) rules.push({ re: new RegExp('https?:\\\\/\\\\/' + hE + END + PATH, 'gi'), rep: 'https:\\/\\/' + toE });
+    }
+    rules.push({ re: new RegExp('//' + h + END + PATH, 'gi'), rep: '//' + to });
+    if (escEl.checked) rules.push({ re: new RegExp('\\\\/\\\\/' + hE + END + PATH, 'gi'), rep: '\\/\\/' + toE });
+
+    let out = src, total = 0;
+    const changes = new Map();
+    for (const { re, rep } of rules) {
+      out = out.replace(re, (m, path) => {
+        const after = rep + path;
+        total++;
+        const c = changes.get(m);
+        if (c) c.n++; else changes.set(m, { after, n: 1 });
+        return after;
+      });
+    }
+    outputEl.value = out;
+
+    // 置換後に旧ドメインの文字列が残っていないか（http なしの記述、パス違いのURL、メールアドレス等）
+    // パス付きで指定した場合もホスト部分だけで確認する
+    const fromHostOnly = from.split('/')[0];
+    const leftover = fromHostOnly === normHost(to).split('/')[0] ? 0
+      : (out.match(new RegExp(reEsc(fromHostOnly) + END, 'gi')) || []).length;
+
+    const pills = [`<span class="pill ${total ? 'ok' : ''}">置換 <strong>${total}</strong> 件</span>`];
+    pills.push(leftover
+      ? `<span class="pill warn">旧ドメイン（${escapeHtml(fromHostOnly)}）がまだ <strong>${leftover}</strong> 件あります（パス違いのURLやURL以外の記述を確認）</span>`
+      : '<span class="pill ok">旧ドメインの残りなし</span>');
+    status.innerHTML = pills.join('');
+
+    if (!changes.size) {
+      changesEl.innerHTML = '<div class="empty">置換対象のURLは見つかりませんでした。</div>';
+      return;
+    }
+    let rows = '';
+    for (const [before, { after, n }] of changes) {
+      rows += `<tr><td><div class="before">${escapeHtml(before)}</div><div class="after">${escapeHtml(after)}</div></td><td class="n">${n}</td></tr>`;
+    }
+    changesEl.innerHTML = `<table><thead><tr><th>置換前 → 置換後</th><th>件数</th></tr></thead><tbody>${rows}</tbody></table>`;
+  }
+
+  let t;
+  const schedule = () => { clearTimeout(t); t = setTimeout(run, 120); };
+  inputEl.addEventListener('input', () => { $('sampleNote').hidden = true; schedule(); });
+  [fromEl, toEl].forEach(el => el.addEventListener('input', () => {
+    store.set('from', fromEl.value); store.set('to', toEl.value); schedule();
+  }));
+  [httpsEl, escEl].forEach(el => el.addEventListener('change', () => {
+    store.set('https', httpsEl.checked ? '1' : '0'); store.set('esc', escEl.checked ? '1' : '0'); run();
+  }));
+  inputEl.addEventListener('paste', () => setTimeout(() => { $('sampleNote').hidden = true; run(); }, 0));
+
+  $('clearBtn').addEventListener('click', () => {
+    inputEl.value = ''; $('sampleNote').hidden = true; run(); inputEl.focus();
+  });
+
+  $('copyBtn').addEventListener('click', () => {
+    const toast = $('toast');
+    const show = msg => { toast.textContent = msg; toast.hidden = false; setTimeout(() => toast.hidden = true, 1800); };
+    const fallback = () => { outputEl.focus(); outputEl.select(); show('選択しました。⌘C / Ctrl+C でコピーしてください'); };
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(outputEl.value).then(() => show('コピーしました'), fallback);
+    } else fallback();
+  });
+
+  run();
+})();
+</script>
+
+</body>
+</html>
